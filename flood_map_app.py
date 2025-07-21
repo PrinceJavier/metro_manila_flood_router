@@ -327,7 +327,7 @@ with col2:
         map_data = st_folium(
             flood_map, 
             height=600,
-            width=600,
+            width=800,
             key=st.session_state.map_key,
             returned_objects=["last_object_clicked_tooltip", "last_clicked"]
         )
