@@ -1,0 +1,10 @@
+streamlit 
+geopandas 
+folium 
+matplotlib
+streamlit-folium
+osmnx 
+numpy
+shapely
+scikit-learn
+watchdog
