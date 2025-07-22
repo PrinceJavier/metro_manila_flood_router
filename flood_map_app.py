@@ -9,7 +9,7 @@ import networkx as nx
 
 # Set page configuration with dark theme
 st.set_page_config(
-    page_title="Metro Manila Flood Route Mapper",
+    page_title="Metro Manila Route Mapper",
     layout="wide",
     page_icon="🌧️"
 )
@@ -105,7 +105,7 @@ st.markdown("""
 # App title with tight layout
 st.markdown("""
     <div class="title-container">
-        <h1>🌧️ Flood Route Visualizer</h1>
+        <h1>🌧️ Metro Manila Route Visualizer</h1>
         <p>Drag markers to set start and end points</p>
     </div>
 """, unsafe_allow_html=True)
