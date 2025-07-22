@@ -279,22 +279,22 @@ def create_flood_map():
     
     # Add flood overlay if toggled
     if st.session_state.show_flood_overlay and flood_gdf is not None:
-        # High-contrast blue shades based on flood level
+        # Blue shades for flood levels
         flood_style = {
-            0: {'fillColor': '#1e90ff', 'color': '#1e90ff', 'fillOpacity': 0.2},
-            1: {'fillColor': '#0066cc', 'color': '#0066cc', 'fillOpacity': 0.4},
-            2: {'fillColor': '#004c99', 'color': '#004c99', 'fillOpacity': 0.6},
-            3: {'fillColor': '#003366', 'color': '#003366', 'fillOpacity': 0.8},
-            4: {'fillColor': '#001a33', 'color': '#001a33', 'fillOpacity': 0.9}
+            0: {'fillColor': '#add8e6', 'color': '#add8e6', 'fillOpacity': 0.2},  # Light blue
+            1: {'fillColor': '#87ceeb', 'color': '#87ceeb', 'fillOpacity': 0.4},  # Sky blue
+            2: {'fillColor': '#4682b4', 'color': '#4682b4', 'fillOpacity': 0.6},  # Steel blue
+            3: {'fillColor': '#4169e1', 'color': '#4169e1', 'fillOpacity': 0.8},  # Royal blue
+            4: {'fillColor': '#00008b', 'color': '#00008b', 'fillOpacity': 0.9}   # Dark blue
         }
-        
+
         folium.GeoJson(
             flood_gdf,
             style_function=lambda feature: {
-                'fillColor': flood_style.get(feature['properties']['Var']), 
-                'color': flood_style.get(feature['properties']['Var']),
+                'fillColor': flood_style.get(feature['properties']['Var'], {}).get('fillColor', '#0000ff'),
+                'color': flood_style.get(feature['properties']['Var'], {}).get('color', '#0000ff'),
                 'weight': 1,
-                'fillOpacity': flood_style.get(feature['properties']['Var'])['fillOpacity']
+                'fillOpacity': flood_style.get(feature['properties']['Var'], {}).get('fillOpacity', 0.5)
             },
             name='Flood Areas'
         ).add_to(m)
@@ -416,10 +416,9 @@ with col1:
         <p>1. Search or drag markers to set locations</p>
         <p>2. Click Calculate Route</p>
         <p>3. Roads are colorized by flood level:</p>
-        <p style="margin-left: 20px;">• <span style="color: green">Green</span>: No flood</p>
         <p style="margin-left: 20px;">• <span style="color: #FFCC00">Yellow Orange</span>: Level 1 flood</p>
         <p style="margin-left: 20px;">• <span style="color: #FF9900">Orange</span>: Level 2 flood</p>
-        <p style="margin-left: 20px;">• <span style="color: red">Red</span>: Level 3+ flood</p>
+        <p style="margin-left: 20px;">• <span style="color: red">Red</span>: Level 3 flood</p>
         <p>4. Flood overlay shows risk areas in blue shades</p>
         <p>5. <strong>Warning:</strong> Flood overlay may slow down map rendering</p>
     </div>
