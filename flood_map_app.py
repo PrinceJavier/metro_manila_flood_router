@@ -404,7 +404,7 @@ with col2:
         # Display the map in a container
         map_data = st_folium(
             flood_map, 
-            height=600,
+            height=800,
             width=800,
             key=st.session_state.map_key,
             returned_objects=["last_object_clicked_tooltip", "last_clicked"]
