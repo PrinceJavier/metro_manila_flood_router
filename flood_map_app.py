@@ -6,6 +6,8 @@ import osmnx as ox
 import os
 import time
 import networkx as nx
+from shapely.geometry import LineString, Point
+from geopy.geocoders import Nominatim
 
 # Set page configuration with dark theme
 st.set_page_config(
@@ -99,6 +101,12 @@ st.markdown("""
             border-radius: 10px;
             text-align: center;
         }
+        .search-box {
+            margin-bottom: 15px;
+        }
+        .search-button {
+            margin-top: 5px !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -106,7 +114,7 @@ st.markdown("""
 st.markdown("""
     <div class="title-container">
         <h1>🌧️ Metro Manila Route Visualizer</h1>
-        <p>Drag markers to set start and end points</p>
+        <p>Search locations or drag markers to set start and end points</p>
     </div>
 """, unsafe_allow_html=True)
 
@@ -123,6 +131,23 @@ if "route_points" not in st.session_state:
     st.session_state.route_points = None
 if "is_loading" not in st.session_state:
     st.session_state.is_loading = False
+if "start_search" not in st.session_state:
+    st.session_state.start_search = ""
+if "end_search" not in st.session_state:
+    st.session_state.end_search = ""
+
+# Initialize geocoder
+geolocator = Nominatim(user_agent="metro_manila_route_visualizer")
+
+# Geocode function
+def geocode_location(query):
+    try:
+        location = geolocator.geocode(query + ", Metro Manila, Philippines")
+        if location:
+            return [location.latitude, location.longitude]
+        return None
+    except Exception:
+        return None
 
 # Load Flood Data
 @st.cache_data
@@ -153,20 +178,25 @@ def create_flood_map():
         3.0: "#08306b"   # Dark Blue
     }
     
-    # Add flood zones with high-contrast colors
-    if flood_gdf is not None:
-        for _, row in flood_gdf.iterrows():
+    # Add flood zones only if they intersect the route
+    if flood_gdf is not None and st.session_state.route_points:
+        # Create route LineString
+        route_line = LineString([(point[1], point[0]) for point in st.session_state.route_points])
+        
+        # Find intersecting floods
+        intersecting_floods = flood_gdf[flood_gdf.intersects(route_line)]
+        
+        for _, row in intersecting_floods.iterrows():
             depth = row['Var']
-            # Get color based on flood level
-            color = flood_colors.get(depth, "#6baed6")  # Default to light blue
+            color = flood_colors.get(depth, "#6baed6")
             
             folium.GeoJson(
                 row['geometry'],
                 style_function=lambda feature, color=color: {
                     'fillColor': color,
-                    'color': '#000000',  # Black borders for contrast
+                    'color': '#000000',
                     'weight': 1,
-                    'fillOpacity': 0.8  # More opaque for better visibility
+                    'fillOpacity': 0.8
                 }
             ).add_to(m)
     
@@ -236,14 +266,66 @@ if flood_gdf is None:
 col1, col2 = st.columns([1, 2])  # Left column smaller for controls
 
 with col1:
-    # Instructions at the top
+    # Search functionality
+    st.markdown("### Search Locations")
+    
+    # Start location search
+    start_col1, start_col2 = st.columns([3, 1])
+    with start_col1:
+        start_search = st.text_input("Start Location", 
+                                   value=st.session_state.start_search,
+                                   key="start_search_input",
+                                   placeholder="e.g., Manila City Hall")
+    with start_col2:
+        start_search_clicked = st.button("🔍", 
+                                       key="start_search_btn",
+                                       help="Search start location",
+                                       use_container_width=True)
+    
+    # End location search
+    end_col1, end_col2 = st.columns([3, 1])
+    with end_col1:
+        end_search = st.text_input("Destination Location", 
+                                 value=st.session_state.end_search,
+                                 key="end_search_input",
+                                 placeholder="e.g., Makati CBD")
+    with end_col2:
+        end_search_clicked = st.button("🔍", 
+                                     key="end_search_btn",
+                                     help="Search destination location",
+                                     use_container_width=True)
+    
+    # Handle search actions
+    if start_search_clicked and start_search:
+        new_location = geocode_location(start_search)
+        if new_location:
+            st.session_state.start_point = new_location
+            st.session_state.start_search = start_search
+            st.session_state.route_points = None
+            st.session_state.map_key = str(time.time())
+            st.rerun()
+        else:
+            st.error("Location not found. Try a different query.")
+    
+    if end_search_clicked and end_search:
+        new_location = geocode_location(end_search)
+        if new_location:
+            st.session_state.end_point = new_location
+            st.session_state.end_search = end_search
+            st.session_state.route_points = None
+            st.session_state.map_key = str(time.time())
+            st.rerun()
+        else:
+            st.error("Location not found. Try a different query.")
+    
+    # Instructions
     st.markdown("""
     <div class="instruction-box">
         <h3>How to Use</h3>
-        <p>1. Drag the green marker to set start</p>
-        <p>2. Drag the red marker to set end</p>
-        <p>3. Click Calculate Route</p>
-        <p>4. Route appears in orange</p>
+        <p>1. Search or drag markers to set locations</p>
+        <p>2. Click Calculate Route</p>
+        <p>3. Route appears in orange</p>
+        <p>4. Floods intersecting route are shown</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -255,29 +337,25 @@ with col1:
                                  help="Find the fastest route between markers"
                                  )
     
-    # Simplified legend with high-contrast blue shades
+    # Simplified legend
     st.markdown("""
     <div class="legend-box">
-        <h3>Flood Levels</h3>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: #6baed6; margin-right: 10px; border: 1px solid #000;"></div>
-            <span>Low Flooding</span>
-        </div>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: #2171b5; margin-right: 10px; border: 1px solid #000;"></div>
-            <span>Medium Flooding</span>
-        </div>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: #08306b; margin-right: 10px; border: 1px solid #000;"></div>
-            <span>High Flooding</span>
-        </div>
+        <h3>Map Legend</h3>
         <div style="display: flex; align-items: center; margin-bottom: 10px;">
             <div style="width: 20px; height: 20px; background-color: green; margin-right: 10px;"></div>
             <span>Start Point</span>
         </div>
-        <div style="display: flex; align-items: center;">
+        <div style="display: flex; align-items: center; margin-bottom: 10px;">
             <div style="width: 20px; height: 20px; background-color: red; margin-right: 10px;"></div>
             <span>End Point</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <div style="width: 20px; height: 3px; background-color: #FF5733; margin-right: 10px;"></div>
+            <span>Route</span>
+        </div>
+        <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <div style="width: 20px; height: 20px; background-color: #6baed6; margin-right: 10px; border: 1px solid #000;"></div>
+            <span>Flood Area</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -339,8 +417,10 @@ with col2:
             
             if "Start Point" in tooltip:
                 st.session_state.start_point = [clicked_location["lat"], clicked_location["lng"]]
+                st.session_state.start_search = ""  # Clear search since user moved marker
             elif "End Point" in tooltip:
                 st.session_state.end_point = [clicked_location["lat"], clicked_location["lng"]]
+                st.session_state.end_search = ""  # Clear search since user moved marker
             
             # Reset map key to force clean rerender
             st.session_state.map_key = str(time.time())
@@ -350,6 +430,6 @@ with col2:
 # Updated footer
 st.markdown("""
 <div class="footer">
-    Flood data: Metro Manila 100-Year Flood from Project NOAH | Routing: OpenStreetMap
+    Flood data: Metro Manila 100-Year Flood from Project NOAH | Routing: OpenStreetMap | Geocoding: Nominatim
 </div>
 """, unsafe_allow_html=True)

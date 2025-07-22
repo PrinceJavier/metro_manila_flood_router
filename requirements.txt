@@ -8,3 +8,4 @@ numpy
 shapely
 scikit-learn
 watchdog
+geopy
