@@ -83,7 +83,8 @@ st.markdown("""
         }
         .title-container {
             text-align: center;
-            margin-bottom: 15px;
+            margin-top: -20px;
+            margin-bottom: 5px;
         }
         .stColumn {
             padding: 5px !important;
@@ -106,14 +107,20 @@ st.markdown("""
         }
         .search-button {
             margin-top: 5px !important;
+            align-self: flex-end;
+        }
+        .button-container {
+            display: flex;
+            align-items: flex-end;
+            height: 100%;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# App title with tight layout
+# App title with tighter layout
 st.markdown("""
     <div class="title-container">
-        <h1>🌧️ Metro Manila Route Visualizer</h1>
+        <h1>Metro Manila Route Visualizer</h1>
         <p>Search locations or drag markers to set start and end points</p>
     </div>
 """, unsafe_allow_html=True)
@@ -135,6 +142,10 @@ if "start_search" not in st.session_state:
     st.session_state.start_search = ""
 if "end_search" not in st.session_state:
     st.session_state.end_search = ""
+if "best_route" not in st.session_state:
+    st.session_state.best_route = None
+if "road_colors" not in st.session_state:
+    st.session_state.road_colors = {}
 
 # Initialize geocoder
 geolocator = Nominatim(user_agent="metro_manila_route_visualizer")
@@ -160,6 +171,80 @@ def load_flood_data():
 
 flood_gdf = load_flood_data()
 
+# Get flood level for a point
+def get_flood_level(point):
+    point_geom = Point(point[1], point[0])  # Point takes (x, y) = (lon, lat)
+    for _, row in flood_gdf.iterrows():
+        if row['geometry'].contains(point_geom):
+            return row['Var']
+    return 0  # No flood
+
+# Find route avoiding flood levels
+def find_best_route(start, end):
+    try:
+        # Get road network for Metro Manila
+        graph = ox.graph_from_place("Metro Manila, Philippines", network_type="drive")
+        
+        # Convert points to (y, x) format (latitude, longitude)
+        start_point = (start[0], start[1])
+        end_point = (end[0], end[1])
+        
+        # Get nearest nodes
+        orig_node = ox.distance.nearest_nodes(graph, X=[start_point[1]], Y=[start_point[0]])[0]
+        dest_node = ox.distance.nearest_nodes(graph, X=[end_point[1]], Y=[end_point[0]])[0]
+        
+        # Find shortest path
+        route = nx.shortest_path(graph, orig_node, dest_node, weight="length")
+        
+        # Get route coordinates
+        route_points = []
+        road_colors = {}
+        for i in range(len(route)-1):
+            u = route[i]
+            v = route[i+1]
+            
+            # Get edge geometry
+            edge_data = graph.get_edge_data(u, v)[0]
+            if 'geometry' in edge_data:
+                line = edge_data['geometry']
+                coords = list(line.coords)
+            else:
+                # Straight line between nodes
+                u_node = graph.nodes[u]
+                v_node = graph.nodes[v]
+                coords = [(u_node['x'], u_node['y']), (v_node['x'], v_node['y'])]
+            
+            # Add coordinates to route
+            for coord in coords:
+                route_points.append((coord[1], coord[0]))  # (lat, lon)
+            
+            # Determine flood level for this road segment
+            flood_level = 0
+            for coord in coords:
+                level = get_flood_level((coord[1], coord[0]))
+                if level > flood_level:
+                    flood_level = level
+            
+            # Assign color based on flood level
+            if flood_level == 0:
+                color = "green"
+            elif flood_level == 1:
+                color = "yellow"
+            elif flood_level == 2:
+                color = "orange"
+            elif flood_level >= 3:
+                color = "red"
+            else:
+                color = "gray"
+            
+            # Store color for this segment
+            road_colors[(u, v)] = color
+        
+        return route_points, road_colors
+    except Exception as e:
+        st.error(f"Routing error: {str(e)}")
+        return None, {}
+
 # Create flood visualization map with draggable markers
 def create_flood_map():
     # Create light-themed map
@@ -170,35 +255,6 @@ def create_flood_map():
         control_scale=True,
         prefer_canvas=True
     )
-    
-    # High-contrast blue shades for flood levels
-    flood_colors = {
-        1.0: "#6baed6",  # Light Blue
-        2.0: "#2171b5",  # Medium Blue
-        3.0: "#08306b"   # Dark Blue
-    }
-    
-    # Add flood zones only if they intersect the route
-    if flood_gdf is not None and st.session_state.route_points:
-        # Create route LineString
-        route_line = LineString([(point[1], point[0]) for point in st.session_state.route_points])
-        
-        # Find intersecting floods
-        intersecting_floods = flood_gdf[flood_gdf.intersects(route_line)]
-        
-        for _, row in intersecting_floods.iterrows():
-            depth = row['Var']
-            color = flood_colors.get(depth, "#6baed6")
-            
-            folium.GeoJson(
-                row['geometry'],
-                style_function=lambda feature, color=color: {
-                    'fillColor': color,
-                    'color': '#000000',
-                    'weight': 1,
-                    'fillOpacity': 0.8
-                }
-            ).add_to(m)
     
     # Add draggable markers
     start_marker = folium.Marker(
@@ -219,43 +275,30 @@ def create_flood_map():
     
     # Add route if it exists
     if st.session_state.route_points is not None:
-        folium.PolyLine(
-            locations=st.session_state.route_points,
-            color="#FF5733",
-            weight=5,
-            opacity=0.9,
-            popup="Fastest Route"
-        ).add_to(m)
+        # Draw route with colored segments
+        if st.session_state.road_colors:
+            # Get the graph to reconstruct the route segments
+            graph = ox.graph_from_place("Metro Manila, Philippines", network_type="drive")
+            
+            # Draw each segment with its assigned color
+            for (u, v), color in st.session_state.road_colors.items():
+                edge_data = graph.get_edge_data(u, v)[0]
+                if 'geometry' in edge_data:
+                    line = edge_data['geometry']
+                    coords = [(coord[1], coord[0]) for coord in line.coords]  # (lat, lon)
+                else:
+                    u_node = graph.nodes[u]
+                    v_node = graph.nodes[v]
+                    coords = [(u_node['y'], u_node['x']), (v_node['y'], v_node['x'])]
+                
+                folium.PolyLine(
+                    locations=coords,
+                    color=color,
+                    weight=5,
+                    opacity=0.9
+                ).add_to(m)
     
     return m
-
-# Find fastest route between points
-def find_fastest_route(start, end):
-    try:
-        # Get road network for Metro Manila
-        graph = ox.graph_from_place("Metro Manila, Philippines", network_type="drive")
-        
-        # Convert points to (y, x) format (latitude, longitude)
-        start_point = (start[0], start[1])
-        end_point = (end[0], end[1])
-        
-        # Get nearest nodes
-        orig_node = ox.distance.nearest_nodes(graph, X=[start_point[1]], Y=[start_point[0]])[0]
-        dest_node = ox.distance.nearest_nodes(graph, X=[end_point[1]], Y=[end_point[0]])[0]
-        
-        # Find shortest path
-        route = nx.shortest_path(graph, orig_node, dest_node, weight="length")
-        
-        # Get route coordinates
-        route_points = []
-        for node in route:
-            point = graph.nodes[node]
-            route_points.append((point['y'], point['x']))
-        
-        return route_points
-    except Exception as e:
-        st.error(f"Routing error: {str(e)}")
-        return None
 
 # Main app layout
 if flood_gdf is None:
@@ -277,10 +320,15 @@ with col1:
                                    key="start_search_input",
                                    placeholder="e.g., Manila City Hall")
     with start_col2:
+        # Wrap button in container for bottom alignment
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
         start_search_clicked = st.button("🔍", 
                                        key="start_search_btn",
                                        help="Search start location",
-                                       use_container_width=True)
+                                       use_container_width=True,
+                                    #    class_="search-button"
+                                       )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # End location search
     end_col1, end_col2 = st.columns([3, 1])
@@ -290,10 +338,15 @@ with col1:
                                  key="end_search_input",
                                  placeholder="e.g., Makati CBD")
     with end_col2:
+        # Wrap button in container for bottom alignment
+        st.markdown('<div class="button-container">', unsafe_allow_html=True)
         end_search_clicked = st.button("🔍", 
                                      key="end_search_btn",
                                      help="Search destination location",
-                                     use_container_width=True)
+                                     use_container_width=True,
+                                    #  class_="search-button"
+                                     )
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Handle search actions
     if start_search_clicked and start_search:
@@ -302,6 +355,8 @@ with col1:
             st.session_state.start_point = new_location
             st.session_state.start_search = start_search
             st.session_state.route_points = None
+            st.session_state.best_route = None
+            st.session_state.road_colors = {}
             st.session_state.map_key = str(time.time())
             st.rerun()
         else:
@@ -313,6 +368,8 @@ with col1:
             st.session_state.end_point = new_location
             st.session_state.end_search = end_search
             st.session_state.route_points = None
+            st.session_state.best_route = None
+            st.session_state.road_colors = {}
             st.session_state.map_key = str(time.time())
             st.rerun()
         else:
@@ -324,8 +381,11 @@ with col1:
         <h3>How to Use</h3>
         <p>1. Search or drag markers to set locations</p>
         <p>2. Click Calculate Route</p>
-        <p>3. Route appears in orange</p>
-        <p>4. Floods intersecting route are shown</p>
+        <p>3. Roads are colorized by flood level:</p>
+        <p style="margin-left: 20px;">• <span style="color: green">Green</span>: No flood</p>
+        <p style="margin-left: 20px;">• <span style="color: yellow">Yellow</span>: Level 1 flood</p>
+        <p style="margin-left: 20px;">• <span style="color: orange">Orange</span>: Level 2 flood</p>
+        <p style="margin-left: 20px;">• <span style="color: red">Red</span>: Level 3 flood</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -336,29 +396,6 @@ with col1:
                                  key="big_button",
                                  help="Find the fastest route between markers"
                                  )
-    
-    # Simplified legend
-    st.markdown("""
-    <div class="legend-box">
-        <h3>Map Legend</h3>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: green; margin-right: 10px;"></div>
-            <span>Start Point</span>
-        </div>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: red; margin-right: 10px;"></div>
-            <span>End Point</span>
-        </div>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 3px; background-color: #FF5733; margin-right: 10px;"></div>
-            <span>Route</span>
-        </div>
-        <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <div style="width: 20px; height: 20px; background-color: #6baed6; margin-right: 10px; border: 1px solid #000;"></div>
-            <span>Flood Area</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
 
     # Handle route calculation
     if calculate_clicked:
@@ -374,19 +411,22 @@ with col2:
                 <h3>Calculating Route</h3>
                 <div style="font-size: 3em;">⏳</div>
                 <p>Processing road network data...</p>
+                <p>Analyzing flood levels along roads...</p>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Actually calculate the route
-        route_points = find_fastest_route(
+        # Calculate the route
+        route_points, road_colors = find_best_route(
             st.session_state.start_point, 
             st.session_state.end_point
         )
         
         if route_points:
-            # Store route for display
+            # Store route and colors
             st.session_state.route_points = route_points
+            st.session_state.road_colors = road_colors
+            
             # Reset map key to force clean rerender
             st.session_state.map_key = str(time.time())
         
@@ -395,7 +435,7 @@ with col2:
     else:
         # Show map loading indicator for initial load
         if not st.session_state.map_initialized:
-            with st.spinner("Loading flood map..."):
+            with st.spinner("Loading map..."):
                 flood_map = create_flood_map()
                 st.session_state.map_initialized = True
         else:
@@ -425,6 +465,8 @@ with col2:
             # Reset map key to force clean rerender
             st.session_state.map_key = str(time.time())
             st.session_state.route_points = None
+            st.session_state.best_route = None
+            st.session_state.road_colors = {}
             st.rerun()
 
 # Updated footer
